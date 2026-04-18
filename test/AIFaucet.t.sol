@@ -108,19 +108,21 @@ contract AIFaucetTest is Test {
     }
 
     function test_Drip_RevertsWhenDailyLimitReached() public {
-        // Pin to the start of a day bucket so 5 cooldowns (5h) stay inside one day window.
+        // Pin to the start of a day bucket; compute absolute timestamps for each drip so the
+        // test does not rely on Solidity re-reading block.timestamp between vm.warp calls.
         uint256 dayStart = (block.timestamp / 1 days) * 1 days;
-        vm.warp(dayStart);
+        uint256 step = COOLDOWN + 1;
 
         // dailyDripAmount accounting is in nominal DRIP units (pre-burn).
         // DAILY / DRIP = 5; 5 drips saturate the cap.
         for (uint256 i = 0; i < 5; i++) {
+            vm.warp(dayStart + i * step);
             vm.prank(alice);
             faucet.drip();
-            vm.warp(block.timestamp + COOLDOWN + 1);
         }
 
-        // Still in the same day bucket.
+        // Still in the same day bucket (5h << 24h).
+        vm.warp(dayStart + 5 * step);
         assertEq(block.timestamp / 1 days, dayStart / 1 days, "still inside day bucket");
 
         vm.prank(alice);
@@ -129,17 +131,16 @@ contract AIFaucetTest is Test {
     }
 
     function test_Drip_DailyCounterResetsNextDay() public {
-        // Pin to the start of a day bucket so we can exhaust the daily cap inside it.
         uint256 dayStart = (block.timestamp / 1 days) * 1 days;
-        vm.warp(dayStart);
+        uint256 step = COOLDOWN + 1;
 
         for (uint256 i = 0; i < 5; i++) {
+            vm.warp(dayStart + i * step);
             vm.prank(alice);
             faucet.drip();
-            vm.warp(block.timestamp + COOLDOWN + 1);
         }
         // Jump into the next day bucket (and well past cooldown).
-        vm.warp(dayStart + 1 days + COOLDOWN + 1);
+        vm.warp(dayStart + 1 days + step);
 
         vm.prank(alice);
         faucet.drip();
