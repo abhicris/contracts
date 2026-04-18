@@ -326,17 +326,21 @@ contract AIFaucetTest is Test {
     ///      never exceeds maxDailyLimit.
     function testFuzz_DailyDripNeverExceedsLimit(uint8 attempts, uint16 spacingSec) public {
         attempts = uint8(bound(uint256(attempts), 1, 50));
-        // 1 second min spacing to avoid same-timestamp reverts
-        spacingSec = uint16(bound(uint256(spacingSec), 1, 3 hours));
+        // Bound spacing strictly less than (1 day / attempts) so the whole schedule fits in
+        // one day bucket. Also keep a 1s min to avoid duplicate-timestamp reverts.
+        uint256 maxSpacing = (1 days) / uint256(attempts);
+        if (maxSpacing == 0) maxSpacing = 1;
+        spacingSec = uint16(bound(uint256(spacingSec), 1, maxSpacing > type(uint16).max ? type(uint16).max : maxSpacing));
 
-        uint256 startDay = block.timestamp / 1 days;
+        uint256 dayStart = (block.timestamp / 1 days) * 1 days;
         uint256 totalDripped = 0;
 
         for (uint256 i = 0; i < attempts; i++) {
-            uint256 nextDay = block.timestamp / 1 days;
-            if (nextDay != startDay) break; // only count within one day bucket
+            uint256 t = dayStart + (i + 1) * uint256(spacingSec);
+            // Hard-assert we stay inside the day bucket (property setup pre-condition).
+            if (t / 1 days != dayStart / 1 days) break;
+            vm.warp(t);
 
-            vm.warp(block.timestamp + spacingSec);
             vm.prank(alice);
             try faucet.drip() {
                 totalDripped += DRIP;
