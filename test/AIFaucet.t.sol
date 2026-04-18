@@ -66,6 +66,12 @@ contract AIFaucetTest is Test {
 
     event Drip(address indexed recipient, uint256 amount);
 
+    // AIToken applies a 0.1% burn on every transfer where neither side is the token itself.
+    // The faucet is a separate contract, so faucet -> user transfers lose 10 bps to burn.
+    // The Drip event still reports the nominal DRIP amount — alice receives slightly less.
+    uint256 internal constant BURN_BPS = 10;
+    uint256 internal constant NET_DRIP = DRIP - (DRIP * BURN_BPS) / 10_000;
+
     function test_Drip_TransfersTokensAndEmits() public {
         uint256 balBefore = token.balanceOf(alice);
 
@@ -75,7 +81,8 @@ contract AIFaucetTest is Test {
         vm.prank(alice);
         faucet.drip();
 
-        assertEq(token.balanceOf(alice) - balBefore, DRIP, "alice receives exactly DRIP");
+        // Nominal DRIP - 0.1% burn = NET_DRIP. See BURN_BPS comment above.
+        assertEq(token.balanceOf(alice) - balBefore, NET_DRIP, "alice receives net of 0.1% burn");
         assertEq(faucet.lastDripTime(alice), block.timestamp);
     }
 
@@ -97,16 +104,24 @@ contract AIFaucetTest is Test {
         vm.prank(alice);
         faucet.drip();
 
-        assertEq(token.balanceOf(alice), DRIP * 2);
+        assertEq(token.balanceOf(alice), NET_DRIP * 2);
     }
 
     function test_Drip_RevertsWhenDailyLimitReached() public {
-        // DAILY / DRIP = 5. Drip 5 times inside one day (advancing only by cooldown).
+        // Pin to the start of a day bucket so 5 cooldowns (5h) stay inside one day window.
+        uint256 dayStart = (block.timestamp / 1 days) * 1 days;
+        vm.warp(dayStart);
+
+        // dailyDripAmount accounting is in nominal DRIP units (pre-burn).
+        // DAILY / DRIP = 5; 5 drips saturate the cap.
         for (uint256 i = 0; i < 5; i++) {
             vm.prank(alice);
             faucet.drip();
             vm.warp(block.timestamp + COOLDOWN + 1);
         }
+
+        // Still in the same day bucket.
+        assertEq(block.timestamp / 1 days, dayStart / 1 days, "still inside day bucket");
 
         vm.prank(alice);
         vm.expectRevert(bytes("Cooldown period not elapsed or daily limit reached"));
@@ -114,18 +129,22 @@ contract AIFaucetTest is Test {
     }
 
     function test_Drip_DailyCounterResetsNextDay() public {
+        // Pin to the start of a day bucket so we can exhaust the daily cap inside it.
+        uint256 dayStart = (block.timestamp / 1 days) * 1 days;
+        vm.warp(dayStart);
+
         for (uint256 i = 0; i < 5; i++) {
             vm.prank(alice);
             faucet.drip();
             vm.warp(block.timestamp + COOLDOWN + 1);
         }
-        // Jump to next day bucket
-        vm.warp(block.timestamp + 1 days);
+        // Jump into the next day bucket (and well past cooldown).
+        vm.warp(dayStart + 1 days + COOLDOWN + 1);
 
         vm.prank(alice);
         faucet.drip();
-        // 6th successful drip -> balance = 6 * DRIP
-        assertEq(token.balanceOf(alice), 6 * DRIP);
+        // 6 successful drips -> net balance = 6 * NET_DRIP (each transfer burned 0.1%)
+        assertEq(token.balanceOf(alice), 6 * NET_DRIP);
     }
 
     // ---------------------------------------------------------------------
@@ -229,7 +248,7 @@ contract AIFaucetTest is Test {
 
         vm.prank(alice);
         faucet.drip();
-        assertEq(token.balanceOf(alice), DRIP);
+        assertEq(token.balanceOf(alice), NET_DRIP);
     }
 
     function test_Pause_OnlyOwner() public {
@@ -255,8 +274,10 @@ contract AIFaucetTest is Test {
         vm.prank(owner);
         faucet.emergencyWithdraw(address(token), faucetBal);
 
-        // internal transfer from contract -> owner is burn-exempt per AIToken._update
-        assertEq(token.balanceOf(owner) - balBefore, faucetBal);
+        // Faucet is not the AIToken itself, so the 0.1% burn applies on the withdrawal transfer.
+        // Pin the observed behaviour so any future change to the token's fee model surfaces here.
+        uint256 expectedNet = faucetBal - (faucetBal * BURN_BPS) / 10_000;
+        assertEq(token.balanceOf(owner) - balBefore, expectedNet);
     }
 
     function test_EmergencyWithdraw_NativePath() public {
