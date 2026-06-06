@@ -77,7 +77,7 @@ develop decentralized applications and deliver compelling experiences.
 [hanzo]:            https://hanzo.ai
 [solidity]:         https://solidity.readthedocs.io
 [truffle]:          http://truffleframework.com/
-[tests]:            https://github.com/hanzoai/solidity/tree/master/test
+[tests]:            https://github.com/hanzoai/contracts/tree/master/test
 
 [build-img]:        https://img.shields.io/travis/hanzoai/solidity.svg
 [build-url]:        https://travis-ci.org/hanzoai/solidity
